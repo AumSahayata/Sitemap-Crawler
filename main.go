@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"strings"
-	"math/rand"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -20,7 +20,7 @@ type SEOData struct {
 }
 
 type Parser interface {
-	
+	getSEOData(resp *http.Response) (SEOData, error)
 }
 
 type DefaultParser struct {
@@ -46,6 +46,7 @@ func isSitemap(urls []string) ([]string, []string) {
 	sitemapFiles := []string{}
 	pages := []string{}
 	for _, page := range urls {
+		foundSitemap := strings.Contains(page, "xml")
 		if foundSitemap == true {
 			fmt.Sprintf("Found sitemap", page)
 			sitemapFiles = append(sitemapFiles, page)
@@ -73,14 +74,14 @@ func makeRequest(targetURL string) (*http.Response, error){
 }
 
 func extractSitemapURLs(startURL string) []string {
-	Worklist := make(chan []string)
+	worklist := make(chan []string)
 	toCrawl := []string{}
 
-	go func(){Worklist <- []string{startURL}}()
+	go func(){worklist <- []string{startURL}}()
 
 	var n int = 1
 	for n > 0 {
-		list := <-Worklist
+		list := <-worklist
 		n--
 
 		for _, link := range list {
@@ -96,7 +97,7 @@ func extractSitemapURLs(startURL string) []string {
 				}
 				sitemapFiles, pages := isSitemap(urls)
 				if sitemapFiles != nil {
-					Worklist <- sitemapFiles
+					worklist <- sitemapFiles
 				}
 				for _, page := range pages {
 					toCrawl = append(toCrawl, page)
@@ -108,16 +109,65 @@ func extractSitemapURLs(startURL string) []string {
 	return toCrawl
 }
 
-func crawlPage() {
+func crawlPage(url string, token chan struct{}) (*http.Response, error){
+	token <- struct{}{}
 
+	resp, err := makeRequest(url)
+	<-token
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
-func scrapeURLs() {
+func scrapeURLs(urls []string, parser Parser, concurreny int) []SEOData{
+	tokens := make(chan struct{}, concurreny)
+	var n int
+	worklist := make(chan []string)
+	results := []SEOData{}
 
+	go func() {worklist <- urls}()
+	for n>0 {
+		list := <-worklist
+		for _, url := range list {
+			if url != "" {
+				n++
+				go func(url string, token chan struct{}){
+					log.Printf("Requesting URL:%s", url)
+					res, err := scrapePage(url, tokens, parser)
+					if err != nil {
+						log.Printf("Encountered Error, URL:%s", url)
+					}else {
+						results = append(results, res)
+					}
+					worklist <- []string{}
+				}(url, tokens)
+			}
+		}
+	}
+
+	return results
 }
 
-func scrapePage(url string, parser Parser) (SEOData, error){
-	res, err := crawlPage(url)
+func extractURLs(resp *http.Response) ([]string, error) {
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	results := []string{}
+	sel := doc.Find("loc")
+
+	for i := range sel.Nodes {
+		loca := sel.Eq(i)
+		result := loca.Text()
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func scrapePage(url string, token chan struct{}, parser Parser) (SEOData, error){
+	res, err := crawlPage(url, token)
 	if err != nil {
 		return SEOData{}, err
 	}
@@ -128,19 +178,29 @@ func scrapePage(url string, parser Parser) (SEOData, error){
 	return data, nil
 }
 
-func getSEOData() {
-
+func (d DefaultParser)getSEOData(resp *http.Response) (SEOData, error){
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return SEOData{}, err
+	}
+	result := SEOData{}
+	result.URL = resp.Request.URL.String()
+	result.StatusCode = resp.StatusCode
+	result.Title = doc.Find("title").First().Text()
+	result.H1 = doc.Find("h1").First().Text()
+	result.MetaDescription, _ = doc.Find("meta[name^=description]").Attr("content")
+	return result, nil
 }
 
-func scrapeSitemap(url string) []SEOData {
+func scrapeSitemap(url string, parser Parser, concurrency int) []SEOData {
 	results := extractSitemapURLs(url)
-	res := scrapeURLs(results)
+	res := scrapeURLs(results, parser, concurrency)
 	return res
 }
 
 func main() {
 	p := DefaultParser{}
-	results := scrapeSitemap("")
+	results := scrapeSitemap("https://www.quicksprout.com/sitemap_index.xml", p, 10)
 	for _, res := range results {
 		fmt.Println(res)
 	}
