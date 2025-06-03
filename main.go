@@ -29,7 +29,6 @@ type DefaultParser struct {
 }
 
 var userAgents = []string{
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15",
 	"Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36>",
 	"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/15.0.1",
@@ -227,7 +226,7 @@ func scrapeSitemap(url string, parser Parser, concurrency int) []SEOData {
 
 func main() {
 	p := DefaultParser{}
-	results := scrapeSitemap("https://www.quicksprout.com/post-sitemap.xml", p, 10)
+	results := scrapeSitemap("siteurl", p, 10)
 	for _, res := range results {
 		fmt.Println(res)
 	}
